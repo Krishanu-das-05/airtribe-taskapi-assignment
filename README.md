@@ -34,7 +34,8 @@ docker-compose.yml       Postgres 16
 
 ## Setup
 
-Requirements: Python 3.12+, Docker Desktop.
+Requirements: Python 3.12+ and PostgreSQL 16 - either Docker Desktop (step 3) or a local Postgres install
+(see [Postgres without Docker](#postgres-without-docker)).
 
 ```bash
 # 1. Virtual environment and dependencies
@@ -58,8 +59,23 @@ python manage.py runserver
 
 The API is now at <http://127.0.0.1:8000/api/tasks/>.
 
-Connect your DB client (DBeaver, pgAdmin, TablePlus...) to `localhost:5432`, database `taskapi`,
+Connect your DB client (DBeaver, pgAdmin, TablePlus, pgweb...) to `localhost:5432`, database `taskapi`,
 user `taskapi`, password = the `POSTGRES_PASSWORD` you put in `.env`. The table is `tasks_task`.
+
+### Postgres without Docker
+
+If Docker is not available, the official PostgreSQL zip binaries run without installation or admin rights
+(this is how the screenshots below were produced, on Windows):
+
+```bash
+# download postgresql-16.x-windows-x64-binaries.zip from enterprisedb.com and extract it to .tools/pgsql
+.tools/pgsql/bin/initdb -D .tools/pgdata -U taskapi -W -A scram-sha-256 -E UTF8   # enter POSTGRES_PASSWORD
+.tools/pgsql/bin/pg_ctl -D .tools/pgdata -l .tools/pg.log -o "-p 5432 -h 127.0.0.1" start
+.tools/pgsql/bin/createdb -h 127.0.0.1 -U taskapi taskapi
+# stop later with: .tools/pgsql/bin/pg_ctl -D .tools/pgdata stop
+```
+
+`.tools/` is git-ignored. [pgweb](https://github.com/sosedoff/pgweb) (single binary, browser UI) works as the DB client.
 
 Settings are read from environment variables; `config/settings.py` also loads a local `.env` file if present.
 `.env` is git-ignored - never commit it.
@@ -490,11 +506,50 @@ Reviewing it against the requirements, it **missed**:
 
 **Simulating bad model output without an LLM:** temporarily change `parse_task_text` in `tasks/ai.py` to
 `return {"title": "", "description": "x"}` and call `/from-text/` -> `502 INVALID_PARSER_OUTPUT` and no new
-row in `tasks_task`. The same check is automated in `FromTextTests.test_parser_returning_empty_title_is_502_and_saves_nothing`.
+row in `tasks_task` (see screenshots 11 and 12). The same check is automated in
+`FromTextTests.test_parser_returning_empty_title_is_502_and_saves_nothing`.
 
 **Debugging:** set a breakpoint in `TaskViewSet.from_text` (after `parse_task_text` returns) and in
 `TaskViewSet.breakdown` (after `break_down_task` returns), run `manage.py runserver --noreload` under the
-VS Code / PyCharm debugger and inspect `parsed` / `items` before validation.
+VS Code / PyCharm debugger (or `python -m pdb`) and inspect `parsed` / `items` before validation (screenshot 13).
+
+## Screenshots
+
+All captured against the running API with the Postgres backend. DB views are from the pgweb DB client.
+
+### Idempotency: same request twice -> one row
+
+![Idempotent requests](screenshots/01-idempotency-requests.png)
+![One row in the DB](screenshots/02-idempotency-db-one-row.png)
+
+### Natural-language creation with an idempotent retry
+
+![From-text requests](screenshots/03-from-text-requests.png)
+![One row in the DB](screenshots/04-from-text-db-one-row.png)
+
+### Subtasks, breakdown and cascade delete
+
+![Subtask and breakdown requests](screenshots/05-subtasks-breakdown-requests.png)
+![Parent and subtasks in the DB before delete](screenshots/06-cascade-db-before-delete.png)
+![Delete parent](screenshots/07-cascade-delete-requests.png)
+![No rows after delete](screenshots/08-cascade-db-after-delete.png)
+
+### Validation errors
+
+![Validation errors](screenshots/09-validation-errors.png)
+
+### Filtering + search + ordering + pagination in one request
+
+![Combined list query](screenshots/10-filter-search-order-paginate.png)
+
+### Simulated bad model output (parse_task_text temporarily returns an empty title)
+
+![502 response](screenshots/11-bad-parser-output-502.png)
+![No row saved](screenshots/12-bad-parser-output-db-no-row.png)
+
+### Breakpoints in the parser and breakdown
+
+![pdb session](screenshots/13-debugger-parser-and-breakdown.png)
 
 ## Documentation
 
